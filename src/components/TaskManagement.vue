@@ -1,174 +1,168 @@
 <template>
-  <div class="task-management">
-    <h1>任务管理</h1>
-    <div class="task-form">
-      <h2>发布新任务</h2>
-      <form @submit.prevent="createTask">
-        <div class="form-group">
-          <label for="taskName">任务名称:</label>
-          <input type="text" v-model="taskName" required />
+  <div class="container mx-auto p-6">
+    <a-card class="mb-6">
+      <template #title>
+        <div class="flex items-center justify-between">
+          <h1 class="text-2xl font-bold">任务管理</h1>
+          <a-button 
+            type="primary" 
+            @click="showCreateModal = true"
+            v-if="userRole === 'teacher'"
+          >
+            <template #icon><PlusOutlined /></template>
+            发布新任务
+          </a-button>
         </div>
-        <div class="form-group">
-          <label for="taskContent">任务内容:</label>
-          <textarea v-model="taskContent" required></textarea>
-        </div>
-        <div class="form-group">
-          <label for="groupId">分组ID:</label>
-          <input type="number" v-model="groupId" required />
-        </div>
-        <div class="form-group">
-          <label for="publishTime">发布时间:</label>
-          <input type="datetime-local" v-model="publishTime" required />
-        </div>
-        <div class="form-group">
-          <label for="deadline">截止时间:</label>
-          <input type="datetime-local" v-model="deadline" required />
-        </div>
-        <button type="submit" class="submit-button">发布任务</button>
-      </form>
-    </div>
-    <div class="student-answers">
-      <h2>学生作答情况</h2>
-      <div v-if="studentAnswers.length">
-        <ul>
-          <li v-for="answer in studentAnswers" :key="answer.student_id">
-            {{ answer.student_name }}: {{ answer.answer_content }}
-          </li>
-        </ul>
-      </div>
-      <div v-else>
-        <p>暂无作答记录</p>
-      </div>
-    </div>
+      </template>
+
+      <!-- 任务列表 -->
+      <a-list
+        :data-source="tasks"
+        :loading="loading"
+        item-layout="vertical"
+      >
+        <template #renderItem="{ item }">
+          <a-list-item>
+            <template #actions>
+              <a-space>
+                <a-button type="link" @click="viewSubmissions(item.task_id)">
+                  查看提交情况
+                </a-button>
+                <a-button 
+                  v-if="userRole === 'teacher'" 
+                  type="link" 
+                  danger 
+                  @click="deleteTask(item.task_id)"
+                >
+                  删除任务
+                </a-button>
+              </a-space>
+            </template>
+
+            <a-list-item-meta>
+              <template #title>
+                <div class="flex items-center">
+                  <FileOutlined class="mr-2" />
+                  <span class="font-bold">{{ item.task_name }}</span>
+                </div>
+              </template>
+              <template #description>
+                <div class="text-gray-500">
+                  <div>
+                    <ClockCircleOutlined class="mr-2" />
+                    截止时间: {{ new Date(item.deadline).toLocaleString() }}
+                  </div>
+                  <div>
+                    <TeamOutlined class="mr-2" />
+                    所属分组: {{ item.group_name }}
+                  </div>
+                </div>
+              </template>
+            </a-list-item-meta>
+
+            <div class="task-content">
+              {{ item.task_content }}
+            </div>
+          </a-list-item>
+        </template>
+
+        <template #empty>
+          <a-empty description="暂无任务" />
+        </template>
+      </a-list>
+    </a-card>
+
+    <!-- 创建任务模态框 -->
+    <task-create-modal
+      v-model:open="showCreateModal"
+      @created="handleTaskCreated"
+    />
+
+    <!-- 查看提交情况模态框 -->
+    <TaskSubmissionsModal
+      v-if="showSubmissionsModal"
+      :taskId="currentTaskId"
+      @close="showSubmissionsModal = false"
+    />
   </div>
 </template>
 
-<script>
-export default {
-  name: 'TaskManagement',
-  data() {
-    return {
-      taskName: '',
-      taskContent: '',
-      groupId: null,
-      publishTime: '',
-      deadline: '',
-      studentAnswers: []
-    };
-  },
-  methods: {
-    async createTask() {
-      try {
-        const response = await fetch('http://localhost:3000/api/tasks', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          },
-          body: JSON.stringify({
-            taskName: this.taskName,
-            taskContent: this.taskContent,
-            groupId: this.groupId,
-            publishTime: this.publishTime,
-            deadline: this.deadline
-          })
-        });
-        if (!response.ok) throw new Error('Failed to create task');
-        alert('任务发布成功');
-      } catch (error) {
-        console.error('Error creating task:', error);
+<script setup>
+import { ref, onMounted } from 'vue';
+import axios from 'axios';
+import { 
+  PlusOutlined, 
+  FileOutlined,
+  ClockCircleOutlined,
+  TeamOutlined 
+} from '@ant-design/icons-vue';
+import { message } from 'ant-design-vue';
+import TaskCreateModal from './TaskCreateModal.vue';
+import TaskSubmissionsModal from './TaskSubmissionsModal.vue';
+
+const tasks = ref([]);
+const showCreateModal = ref(false);
+const showSubmissionsModal = ref(false);
+const loading = ref(false);
+const currentTaskId = ref(null);
+const userRole = localStorage.getItem('userRole');
+
+const fetchTasks = async () => {
+  loading.value = true;
+  try {
+    const response = await axios.get('http://localhost:3000/api/tasks', {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
       }
-    },
-    async fetchStudentAnswers(taskId) {
-      try {
-        const response = await fetch(`http://localhost:3000/api/task/${taskId}/answers`, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          }
-        });
-        if (!response.ok) throw new Error('Failed to fetch student answers');
-        this.studentAnswers = await response.json();
-      } catch (error) {
-        console.error('Error fetching student answers:', error);
-      }
-    }
-  },
-  mounted() {
-    const taskId = 1; // 这里需要根据实际情况设置
-    this.fetchStudentAnswers(taskId);
+    });
+    tasks.value = response.data;
+  } catch (error) {
+    console.error('获取任务失败:', error);
+    message.error('获取任务列表失败');
+  } finally {
+    loading.value = false;
   }
 };
+
+const deleteTask = async (taskId) => {
+  try {
+    await message.confirm('确定要删除这个任务吗？');
+    await axios.delete(`http://localhost:3000/api/tasks/${taskId}`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    message.success('删除成功');
+    await fetchTasks();
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('删除失败:', error);
+      message.error('删除任务失败');
+    }
+  }
+};
+
+const viewSubmissions = (taskId) => {
+  currentTaskId.value = taskId;
+  showSubmissionsModal.value = true;
+};
+
+const handleTaskCreated = async () => {
+  message.success('任务创建成功');
+  await fetchTasks();
+};
+
+onMounted(fetchTasks);
 </script>
 
 <style scoped>
-.task-management {
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 20px;
-  background-color: #f9f9f9;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+.task-content {
+  margin-top: 16px;
+  white-space: pre-wrap;
 }
 
-h1, h2 {
-  color: #333;
-  margin-bottom: 20px;
-}
-
-.task-form, .student-answers {
-  margin-bottom: 40px;
-}
-
-.form-group {
-  margin-bottom: 15px;
-}
-
-label {
-  display: block;
-  margin-bottom: 5px;
-  font-weight: bold;
-}
-
-input[type="text"],
-input[type="number"],
-input[type="datetime-local"],
-textarea {
-  width: 100%;
-  padding: 8px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  box-sizing: border-box;
-  margin-bottom: 10px;
-}
-
-textarea {
-  resize: vertical;
-}
-
-.submit-button {
-  background-color: #4CAF50;
-  color: white;
-  padding: 10px 20px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 16px;
-}
-
-.submit-button:hover {
-  background-color: #45a049;
-}
-
-ul {
-  list-style-type: none;
-  padding: 0;
-}
-
-li {
-  background-color: #fff;
-  margin-bottom: 10px;
-  padding: 10px;
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+.container {
+  max-width: 1200px;
 }
 </style> 
