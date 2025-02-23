@@ -1,226 +1,281 @@
 <template>
   <div class="container mx-auto p-6">
-    <h1 class="text-2xl font-bold mb-4">分组管理</h1>
-    <!-- 创建分组按钮 -->
-    <button 
-      @click="showCreateModal = true"
-      class="mb-6 bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-3 rounded-lg shadow-md hover:shadow-lg transition-all"
-    >
-      + 创建新分组
-    </button>
+    <a-card class="mb-6">
+      <template #title>
+        <div class="flex items-center justify-between">
+          <h1 class="text-2xl font-bold">分组管理</h1>
+          <a-button 
+            type="primary" 
+            @click="showModal = true"
+            v-if="userRole === 'teacher'"
+          >
+            <template #icon><PlusOutlined /></template>
+            创建新分组
+          </a-button>
+        </div>
+      </template>
 
-    <!-- 分组列表 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div 
-        v-for="group in groups" 
-        :key="group.group_id"
-        class="bg-white rounded-xl shadow-md p-6 transition-all hover:shadow-lg"
+      <!-- 分组列表 -->
+      <a-list
+        :data-source="groups"
+        :loading="loading"
+        item-layout="vertical"
       >
-        <div class="flex justify-between items-start mb-4">
-          <div>
-            <h3 class="text-xl font-semibold text-gray-800">{{ group.group_name }}</h3>
-            <p class="text-sm text-gray-500 mt-1">
-              创建于 {{ formatDate(group.create_time) }}
-            </p>
-            <p class="text-sm text-gray-500 mt-1">
-              成员数量: {{ group.members.length }}
-            </p>
-          </div>
-          <button @click="toggleMembers(group.group_id)" class="text-blue-500 hover:underline">
-            {{ group.showMembers ? '隐藏成员' : '查看成员' }}
-          </button>
-        </div>
+        <template #renderItem="{ item }">
+          <a-list-item>
+            <template #actions>
+              <a-space>
+                <a-button 
+                  type="link" 
+                  @click="viewGroupMembers(item)"
+                >
+                  查看成员
+                </a-button>
+                <a-button 
+                  v-if="userRole === 'teacher'" 
+                  type="link" 
+                  danger 
+                  @click="deleteGroup(item.group_id)"
+                >
+                  删除分组
+                </a-button>
+              </a-space>
+            </template>
 
-        <!-- 成员列表 -->
-        <div v-if="group.showMembers" class="border-t pt-4">
-          <h4 class="text-sm font-medium text-gray-700 mb-2">成员列表</h4>
-          <div class="flex flex-wrap gap-2">
-            <div 
-              v-for="member in group.members"
-              :key="member.StudentID"
-              class="bg-gray-50 px-3 py-1 rounded-full text-sm text-gray-600"
-            >
-              {{ member.Name }} ({{ member.StudentID }})
+            <a-list-item-meta>
+              <template #title>
+                <div class="flex items-center">
+                  <TeamOutlined class="mr-2" />
+                  <span class="font-bold">{{ item.group_name }}</span>
+                </div>
+              </template>
+              <template #description>
+                <div class="text-gray-500">
+                  <div>
+                    <UserOutlined class="mr-2" />
+                    学生数量: {{ item.members ? item.members.length : 0 }}
+                  </div>
+                  <div>
+                    <ClockCircleOutlined class="mr-2" />
+                    创建时间: {{ formatDate(item.create_time) }}
+                  </div>
+                </div>
+              </template>
+            </a-list-item-meta>
+
+            <div class="students-list mt-4">
+              <a-tag v-for="member in item.members" 
+                    :key="member.student_id"
+                    class="mb-2 mr-2">
+                {{ member.student_name }}
+              </a-tag>
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
+          </a-list-item>
+        </template>
+
+        <template #empty>
+          <a-empty description="暂无分组" />
+        </template>
+      </a-list>
+    </a-card>
 
     <!-- 创建分组模态框 -->
-    <div 
-      v-if="showCreateModal"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4"
+    <GroupCreateModal 
+      v-model:open="showModal"
+      @created="handleGroupCreated"
+    />
+
+    <!-- 查看成员模态框 -->
+    <a-modal
+      v-model:open="showMembersModal"
+      title="组内成员详情"
+      :footer="null"
+      width="800px"
     >
-      <div class="bg-white rounded-2xl max-w-md w-full shadow-xl">
-        <div class="p-6">
-          <h2 class="text-2xl font-bold text-gray-800 mb-4">新建分组</h2>
-          
-          <input
-            v-model="newGroup.name"
-            placeholder="请输入分组名称"
-            class="w-full mb-6 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-
-          <h3 class="text-lg font-medium text-gray-700 mb-4">选择成员</h3>
-          <div class="grid grid-cols-1 gap-3 max-h-96 overflow-y-auto p-2">
-            <label
-              v-for="student in filteredStudents"
-              :key="student.StudentID"
-              class="flex items-center space-x-3 p-3 hover:bg-gray-50 rounded-lg cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                :value="student.StudentID"
-                v-model="newGroup.selectedStudents"
-                class="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+      <a-table
+        :columns="columns"
+        :data-source="currentGroupMembers"
+        :loading="membersLoading"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'actions'">
+            <a-space>
+              <a-button 
+                v-if="userRole === 'teacher'"
+                type="link" 
+                danger
+                @click="removeMember(record)"
               >
-              <div>
-                <span class="block text-gray-700">{{ student.Name }}</span>
-                <span class="block text-sm text-gray-500">{{ student.StudentID }}</span>
-              </div>
-            </label>
-          </div>
-
-          <div class="mt-6 flex justify-end space-x-3">
-            <button
-              @click="showCreateModal = false"
-              class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              取消
-            </button>
-            <button
-              @click="createGroup"
-              class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              创建
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+                移除
+              </a-button>
+            </a-space>
+          </template>
+        </template>
+      </a-table>
+    </a-modal>
   </div>
 </template>
 
-<script>
-import { ref, onMounted, toRaw } from 'vue';
+<script setup>
+import { ref, onMounted } from 'vue';
 import axios from 'axios';
+import { 
+  PlusOutlined, 
+  TeamOutlined,
+  UserOutlined,
+  ClockCircleOutlined 
+} from '@ant-design/icons-vue';
+import { message } from 'ant-design-vue';
+import GroupCreateModal from './GroupCreateModal.vue';
 
-export default {
-  setup() {
-    const groups = ref([]);
-    const showCreateModal = ref(false);
-    const newGroup = ref({
-      name: '',
-      selectedStudents: []
-    });
-    const filteredStudents = ref([]);
+const groups = ref([]);
+const showModal = ref(false);
+const loading = ref(false);
+const userRole = localStorage.getItem('userRole');
 
-    const fetchGroups = async () => {
-      try {
-        const token = localStorage.getItem('token');
-        if (!token) {
-          throw new Error('Token not found');
-        }
-        const response = await axios.get('http://localhost:3000/api/groups', {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        });
-        groups.value = response.data.map(group => ({
-          ...group,
-          showMembers: false // 用于控制成员列表的显示
-        }));
-      } catch (error) {
-        console.error('Failed to fetch groups:', error);
-      }
-    };
+const showMembersModal = ref(false);
+const currentGroupMembers = ref([]);
+const membersLoading = ref(false);
 
-    const fetchStudents = async () => {
-      try {
-        const response = await axios.get('http://localhost:3000/api/students');
-        console.log('学生数据:', response.data);
-        if (response.data && Array.isArray(response.data)) {
-          filteredStudents.value = response.data.map(student => ({
-            StudentID: student.StudentID,
-            Name: student.Name
-          }));
-        }
-      } catch (error) {
-        console.error('Failed to fetch students:', error);
-      }
-    };
-
-    const createGroup = async () => {
-      try {
-        const token = localStorage.getItem('token');
-        if (!token) {
-          throw new Error('Token not found');
-        }
-        const response = await axios.post('http://localhost:3000/api/groups', {
-          group_name: newGroup.value.name,
-          student_ids: newGroup.value.selectedStudents
-        }, {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        });
-        console.log('创建分组成功:', response.data);
-        await fetchGroups();
-        newGroup.value.name = '';
-        newGroup.value.selectedStudents = [];
-      } catch (error) {
-        console.error('Failed to create group:', error);
-        alert('创建分组失败，请检查输入数据和网络连接。');
-      } finally {
-        showCreateModal.value = false;
-      }
-    };
-
-    const toggleMembers = (groupId) => {
-      const group = groups.value.find(g => g.group_id === groupId);
-      if (group) {
-        group.showMembers = !group.showMembers;
-      }
-    };
-
-    const formatDate = (dateString) => {
-      const options = { year: 'numeric', month: 'long', day: 'numeric' };
-      return new Date(dateString).toLocaleDateString(undefined, options);
-    };
-
-    onMounted(() => {
-      fetchGroups();
-      fetchStudents();
-    });
-
-    return {
-      groups,
-      showCreateModal,
-      newGroup,
-      filteredStudents,
-      createGroup,
-      toggleMembers,
-      formatDate
-    };
+const columns = [
+  {
+    title: '学号',
+    dataIndex: 'student_id',
+    key: 'student_id',
   },
+  {
+    title: '姓名',
+    dataIndex: 'student_name',
+    key: 'student_name',
+  },
+  {
+    title: '班级',
+    dataIndex: 'class_name',
+    key: 'class_name',
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 120,
+  }
+];
+
+const formatDate = (dateString) => {
+  if (!dateString) return '';
+  return new Date(dateString).toLocaleString();
 };
+
+const fetchGroups = async () => {
+  loading.value = true;
+  try {
+    const response = await axios.get('http://localhost:3000/api/groups', {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (Array.isArray(response.data)) {
+      groups.value = response.data.map(group => ({
+        ...group,
+        members: group.members || [] // 确保members数组存在
+      }));
+    } else {
+      groups.value = [];
+      console.error('返回的数据格式不正确:', response.data);
+    }
+  } catch (error) {
+    console.error('获取分组失败:', error);
+    message.error('获取分组列表失败');
+  } finally {
+    loading.value = false;
+  }
+};
+
+const deleteGroup = async (groupId) => {
+  try {
+    await message.confirm('确定要删除这个分组吗？');
+    await axios.delete(`http://localhost:3000/api/groups/${groupId}`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    message.success('删除成功');
+    await fetchGroups();
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('删除失败:', error);
+      message.error('删除分组失败');
+    }
+  }
+};
+
+const handleGroupCreated = async () => {
+  message.success('分组创建成功');
+  await fetchGroups();
+};
+
+const viewGroupMembers = async (group) => {
+  membersLoading.value = true;
+  try {
+    const response = await axios.get(`http://localhost:3000/api/groups/${group.group_id}/members`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    currentGroupMembers.value = response.data;
+    showMembersModal.value = true;
+  } catch (error) {
+    console.error('获取成员详情失败:', error);
+    message.error('获取成员详情失败');
+  } finally {
+    membersLoading.value = false;
+  }
+};
+
+const removeMember = async (member) => {
+  try {
+    await message.confirm('确定要移除该成员吗？');
+    await axios.delete(`http://localhost:3000/api/groups/${member.group_id}/members/${member.student_id}`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    message.success('成员移除成功');
+    // 刷新成员列表和分组列表
+    await viewGroupMembers({ group_id: member.group_id });
+    await fetchGroups();
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('移除成员失败:', error);
+      message.error('移除成员失败');
+    }
+  }
+};
+
+onMounted(fetchGroups);
 </script>
 
-<style>
-/* 添加 Tailwind CSS 的 CDN 链接到项目 */
-@import url('https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css');
-
-/* 滚动条样式 */
-::-webkit-scrollbar {
-  width: 8px;
+<style scoped>
+.container {
+  max-width: 1200px;
 }
 
-::-webkit-scrollbar-track {
-  @apply bg-gray-100;
+.students-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 rounded-full hover:bg-gray-400;
+.ant-tag {
+  margin: 4px;
+  padding: 4px 8px;
+}
+
+.ant-table {
+  margin-top: 16px;
 }
 </style>
